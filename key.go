@@ -132,25 +132,47 @@ func UnmarshalPublicKeyPEMBundle(data []byte) ([]PublicKey, error) {
 	return pubKeys, nil
 }
 
-// UnmarshalPrivateKeyPEM parses the PEM encoded data and returns a libtrust
-// PrivateKey or an error if there is a problem with the encoding.
-func UnmarshalPrivateKeyPEM(data []byte) (PrivateKey, error) {
+var (
+	// ErrKeyFileEncrypted when attempting to load an encrypted key payload, with
+	// no passphrase provided
+	ErrKeyFileEncrypted = fmt.Errorf("key file is encrypted and no passphrase provided")
+	// ErrNoPEMData when the provided payload did not include PEM encoded data
+	ErrNoPEMData = fmt.Errorf("unable to find PEM encoded data")
+)
+
+// UnmarshalEncryptedPrivateKeyPEM decrypts the PEM encoded data with
+// passphrase, and returns a libtrust PrivateKey
+func UnmarshalEncryptedPrivateKeyPEM(data, passphrase []byte) (PrivateKey, error) {
 	pemBlock, _ := pem.Decode(data)
 	if pemBlock == nil {
-		return nil, errors.New("unable to find PEM encoded data")
+		return nil, ErrNoPEMData
 	}
 
-	var key PrivateKey
+	keyBlob, err := x509.DecryptPEMBlock(pemBlock, passphrase)
+	if err != nil {
+		return nil, err
+	}
 
+	pk, err := unmarshalPrivateKey(pemBlock.Type, keyBlob)
+	if err != nil {
+		return nil, err
+	}
+	addPEMHeadersToKey(pemBlock, pk.PublicKey())
+	return pk, nil
+}
+
+// common logic for unmarshalling PEM data
+func unmarshalPrivateKey(pemType string, pemBytes []byte) (PrivateKey, error) {
+	var key PrivateKey
 	switch {
-	case pemBlock.Type == "RSA PRIVATE KEY":
-		rsaPrivateKey, err := x509.ParsePKCS1PrivateKey(pemBlock.Bytes)
+	case pemType == "RSA PRIVATE KEY":
+		rsaPrivateKey, err := x509.ParsePKCS1PrivateKey(pemBytes)
 		if err != nil {
 			return nil, fmt.Errorf("unable to decode RSA Private Key PEM data: %s", err)
 		}
 		key = fromRSAPrivateKey(rsaPrivateKey)
-	case pemBlock.Type == "EC PRIVATE KEY":
-		ecPrivateKey, err := x509.ParseECPrivateKey(pemBlock.Bytes)
+	case pemType == "EC PRIVATE KEY":
+		ecPrivateKey, err := x509.ParseECPrivateKey(pemBytes)
 		if err != nil {
 			return nil, fmt.Errorf("unable to decode EC Private Key PEM data: %s", err)
 		}
@@ -159,12 +181,28 @@ func UnmarshalPrivateKeyPEM(data []byte) (PrivateKey, error) {
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("unable to get PrivateKey from PEM type: %s", pemBlock.Type)
+		return nil, fmt.Errorf("unable to get PrivateKey from PEM type: %s", pemType)
+	}
+	return key, nil
+}
+
+// UnmarshalPrivateKeyPEM parses the PEM encoded data and returns a libtrust
+// PrivateKey or an error if there is a problem with the encoding.
+func UnmarshalPrivateKeyPEM(data []byte) (PrivateKey, error) {
+	pemBlock, _ := pem.Decode(data)
+	if pemBlock == nil {
+		return nil, ErrNoPEMData
+	}
+	if x509.IsEncryptedPEMBlock(pemBlock) {
+		return nil, ErrKeyFileEncrypted
 	}
 
-	addPEMHeadersToKey(pemBlock, key.PublicKey())
-
-	return key, nil
+	pk, err := unmarshalPrivateKey(pemBlock.Type, pemBlock.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	addPEMHeadersToKey(pemBlock, pk.PublicKey())
+	return pk, nil
 }
 
 // UnmarshalPublicKeyJWK unmarshals the given JSON Web Key into a generic
