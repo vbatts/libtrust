@@ -46,6 +46,22 @@ func testKeyFiles(t *testing.T, key PrivateKey) {
 	publicKeyFilenamePEM := publicKeyFilename + ".pem"
 	publicKeyFilenameJWK := publicKeyFilename + ".jwk"
 
+	// FirstEncrpted
+	passphrase := []byte("1234")
+	t.Logf("%#v", key)
+	if err = SaveEncryptedKey(privateKeyFilenamePEM, key, passphrase); err != nil {
+		t.Fatal(err)
+	}
+	loadedPEMKey, err := LoadEncryptedKeyFile(privateKeyFilenamePEM, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = SaveEncryptedKey(privateKeyFilenameJWK, key, []byte("1234")); err != ErrNotSupported {
+		t.Fatal("expected support failure on encrypted JWK key")
+	}
+
+	// Next unencrypted (it will clobber the above used keys)
 	if err = SaveKey(privateKeyFilenamePEM, key); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +78,7 @@ func testKeyFiles(t *testing.T, key PrivateKey) {
 		t.Fatal(err)
 	}
 
-	loadedPEMKey, err := LoadKeyFile(privateKeyFilenamePEM)
+	loadedPEMKey, err = LoadKeyFile(privateKeyFilenamePEM)
 	if err != nil {
 		t.Fatal(err)
 	}

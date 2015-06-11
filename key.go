@@ -96,6 +96,7 @@ func FromCryptoPrivateKey(cryptoPrivateKey crypto.PrivateKey) (PrivateKey, error
 // UnmarshalPublicKeyPEM parses the PEM encoded data and returns a libtrust
 // PublicKey or an error if there is a problem with the encoding.
 func UnmarshalPublicKeyPEM(data []byte) (PublicKey, error) {
+	// TODO(vbatts) this needs to be a loop, and perhaps return []PrivateKey
 	pemBlock, _ := pem.Decode(data)
 	if pemBlock == nil {
 		return nil, errors.New("unable to find PEM encoded data")
@@ -136,13 +137,18 @@ var (
 	// ErrKeyFileEncrypted when attempting to load an encrypted key payload, with
 	// no passphrase provided
 	ErrKeyFileEncrypted = fmt.Errorf("key file is encrypted and no passphrase provided")
+
 	// ErrNoPEMData when the provided payload did not include PEM encoded data
 	ErrNoPEMData = fmt.Errorf("unable to find PEM encoded data")
+
+	// ErrNoEncryptedKey when the provided payload did not include an encrypted key
+	ErrNoEncryptedKey = fmt.Errorf("unable to find encrypted key data")
 )
 
 // UnmarshalEncryptedPrivateKeyPEM decrypts the PEM encoded data with
 // passphrase, and returns a libtrust PrivateKey
 func UnmarshalEncryptedPrivateKeyPEM(data, passphrase []byte) (PrivateKey, error) {
+	// TODO(vbatts) this needs to be a loop, and perhaps return []PrivateKey
 	pemBlock, _ := pem.Decode(data)
 	if pemBlock == nil {
 		return nil, ErrNoPEMData
@@ -161,17 +167,22 @@ func UnmarshalEncryptedPrivateKeyPEM(data, passphrase []byte) (PrivateKey, error
 	return pk, nil
 }
 
-// common logic for unmarshalling PEM data
+var (
+	rsaPrivateKeyBlockType = "RSA PRIVATE KEY"
+	ecPrivateKeyBlockType  = "EC PRIVATE KEY"
+)
+
+// common logic for unmarshalling PEM encoded payloads
 func unmarshalPrivateKey(pemType string, pemBytes []byte) (PrivateKey, error) {
 	var key PrivateKey
 	switch {
-	case pemType == "RSA PRIVATE KEY":
+	case pemType == rsaPrivateKeyBlockType:
 		rsaPrivateKey, err := x509.ParsePKCS1PrivateKey(pemBytes)
 		if err != nil {
 			return nil, fmt.Errorf("unable to decode RSA Private Key PEM data: %s", err)
 		}
 		key = fromRSAPrivateKey(rsaPrivateKey)
-	case pemType == "EC PRIVATE KEY":
+	case pemType == ecPrivateKeyBlockType:
 		ecPrivateKey, err := x509.ParseECPrivateKey(pemBytes)
 		if err != nil {
 			return nil, fmt.Errorf("unable to decode EC Private Key PEM data: %s", err)
@@ -189,6 +200,7 @@ func unmarshalPrivateKey(pemType string, pemBytes []byte) (PrivateKey, error) {
 // UnmarshalPrivateKeyPEM parses the PEM encoded data and returns a libtrust
 // PrivateKey or an error if there is a problem with the encoding.
 func UnmarshalPrivateKeyPEM(data []byte) (PrivateKey, error) {
+	// TODO(vbatts) this needs to be a loop, and perhaps return []PrivateKey
 	pemBlock, _ := pem.Decode(data)
 	if pemBlock == nil {
 		return nil, ErrNoPEMData

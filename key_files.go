@@ -1,6 +1,8 @@
 package libtrust
 
 import (
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -33,6 +35,53 @@ func readKeyFileBytes(filename string) ([]byte, error) {
 /*
 	Loading and Saving of Public and Private Keys in either PEM or JWK format.
 */
+
+// LoadEncryptedKeyFile reads the key at filename and decrypts with passphrase.
+// JWK not supported (only PEM)
+func LoadEncryptedKeyFile(filename string, passphrase []byte) (PrivateKey, error) {
+	if strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".jwk") {
+		// TODO support JWK
+		return nil, ErrNotSupported
+	}
+	contents, err := readKeyFileBytes(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("%v\n", contents)
+	var rest []byte = contents
+	for {
+		pemBlock, rest := pem.Decode(rest)
+		if !x509.IsEncryptedPEMBlock(pemBlock) {
+			// fall through to the next
+			continue
+		}
+		if len(pemBlock.Bytes) == 0 {
+			break
+		}
+		fmt.Printf("%v\n", pemBlock)
+		// TODO put JWE/JWK here once supported
+		data, err := x509.DecryptPEMBlock(pemBlock, passphrase)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("%v\n", data)
+		pk, err := unmarshalPrivateKey(pemBlock.Type, data)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Println("FARTS2")
+		addPEMHeadersToKey(pemBlock, pk.PublicKey())
+		return pk, nil
+
+		if rest == nil {
+			break
+		}
+	}
+
+	// if we've made it here, then bail that the file does is not an encrypted key
+	return nil, ErrNoEncryptedKey
+}
 
 // LoadKeyFile opens the given filename and attempts to read a Private Key
 // encoded in either PEM or JWK format (if .json or .jwk file extension).
@@ -84,11 +133,54 @@ func LoadPublicKeyFile(filename string) (PublicKey, error) {
 	return key, nil
 }
 
+// DefaultPEMCipher is the default cipher used for encrypting PEM encoded
+// PrivateKey
+var DefaultPEMCipher = x509.PEMCipherAES256
+var ErrNotSupported = fmt.Errorf("not supported")
+
+// SaveEncryptedKey will encrypt the PrivateKey key with passphrase, and save
+// it to filename. JWK encrypted keys not supported yet (only PEM).
+func SaveEncryptedKey(filename string, key PrivateKey, passphrase []byte) error {
+	// TODO support JWK
+	var (
+		encodedKey []byte
+		err        error
+	)
+	if strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".jwk") {
+		return ErrNotSupported
+	} else {
+		var data []byte
+		switch key.(type) {
+		case *rsaPrivateKey:
+			k, _ := key.(*rsaPrivateKey)
+			data = x509.MarshalPKCS1PrivateKey(k.PrivateKey)
+		}
+		// Encrypt and encode in PEM format.
+		pemBlock, err := x509.EncryptPEMBlock(rand.Reader,
+			rsaPrivateKeyBlockType,
+			data,
+			passphrase,
+			DefaultPEMCipher)
+		if err != nil {
+			return fmt.Errorf("unable to encode private key PEM: %s", err)
+		}
+		encodedKey = pem.EncodeToMemory(pemBlock)
+	}
+	err = ioutil.WriteFile(filename, encodedKey, os.FileMode(0600))
+	if err != nil {
+		return fmt.Errorf("unable to write private key file %s: %s", filename, err)
+	}
+
+	return nil
+}
+
 // SaveKey saves the given key to a file using the provided filename.
 // This process will overwrite any existing file at the provided location.
 func SaveKey(filename string, key PrivateKey) error {
-	var encodedKey []byte
-	var err error
+	var (
+		encodedKey []byte
+		err        error
+	)
 
 	if strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".jwk") {
 		// Encode in JSON Web Key format.
